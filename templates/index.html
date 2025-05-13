@@ -1,1 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Email Scheduler</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        form { max-width: 400px; margin: auto; }
+        input, textarea, button {
+            width: 100%; margin: 5px 0; padding: 8px;
+            border: 1px solid #ddd; border-radius: 4px;
+        }
+        button { background-color: #4285f4; color: white; }
+    </style>
+</head>
+<body>
+    <h2>Email Scheduler</h2>
+    <form method="POST">
+        <label>Sender Email:</label>
+        <input type="email" name="sender_email" required>
+        
+        <label>Sender Password:</label>
+        <input type="password" name="sender_password" required>
 
+        <label>Recipient Email:</label>
+        <input type="email" name="to_email" required>
+
+        <label>Subject:</label>
+        <input type="text" name="subject" required>
+
+        <label>Message:</label>
+        <textarea name="message" rows="4" required></textarea>
+
+        <label>Send Time (YYYY-MM-DD HH:MM:SS):</label>
+        <input type="text" name="send_time" placeholder="2025-05-13 14:30:00" required>
+
+        <button type="submit">Schedule Email</button>
+    </form>
+</body>
+          </html>
