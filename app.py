@@ -1,115 +1,89 @@
-import gradio as gr
 import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import sqlite3
 from datetime import datetime
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.date import DateTrigger
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-import pytz
-import logging
-import os
+import time
+import threading
+from flask import Flask, request, render_template
 
-# Setup logging for debugging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
-logging.getLogger("apscheduler").setLevel(logging.DEBUG)
+app = Flask(__name__)
 
-# Initialize persistent scheduler with SQLite job store
-jobstores = {"default": SQLAlchemyJobStore(url="sqlite:///jobs.sqlite")}
-scheduler = BackgroundScheduler(jobstores=jobstores)
-scheduler.start()
+# Database setup
+def init_db():
+    conn = sqlite3.connect('emails.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS scheduled_emails (
+            id INTEGER PRIMARY KEY,
+            to_email TEXT,
+            subject TEXT,
+            message TEXT,
+            send_time TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-# Email sender function
-def send_email(sender_email, sender_password, recipient_email, subject, body):
+# Function to send an email
+def send_email(sender_email, sender_password, to_email, subject, message):
     try:
-        logging.info("Executing scheduled job to send email.")
-
-        # Compose the email
-        message = MIMEMultipart()
-        message["From"] = sender_email
-        message["To"] = recipient_email
-        message["Subject"] = subject
-        message.attach(MIMEText(body, "plain"))
-
-        # Connect to the SMTP server
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.set_debuglevel(1)  # Enable SMTP debugging
             server.starttls()
             server.login(sender_email, sender_password)
-            server.sendmail(sender_email, recipient_email, message.as_string())
-
-        logging.info(f"Email sent successfully to {recipient_email}")
-        return f"Email sent successfully to {recipient_email}"
-    except smtplib.SMTPException as smtp_error:
-        logging.error(f"SMTP error occurred: {smtp_error}")
-        return f"SMTP error occurred: {smtp_error}"
+            email_message = f"Subject: {subject}\n\n{message}"
+            server.sendmail(sender_email, to_email, email_message)
+            print(f"Email sent to {to_email}")
     except Exception as e:
-        logging.error(f"General error occurred: {e}")
-        return f"General error occurred: {e}"
+        print(f"Failed to send email: {e}")
 
-# Schedule email function
-def schedule_email(sender_email, sender_password, recipient_email, subject, body, date, time_str, am_pm):
-    try:
-        # Parse date and time
-        time_parts = [int(x) for x in time_str.split(":")]
-        if am_pm.lower() == "pm" and time_parts[0] != 12:
-            time_parts[0] += 12
-        elif am_pm.lower() == "am" and time_parts[0] == 12:
-            time_parts[0] = 0
+# Schedule email
+def schedule_email(to_email, subject, message, send_time):
+    conn = sqlite3.connect('emails.db')
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO scheduled_emails (to_email, subject, message, send_time)
+        VALUES (?, ?, ?, ?)
+    ''', (to_email, subject, message, send_time))
+    conn.commit()
+    conn.close()
 
-        # Create a datetime object in the local timezone
-        local_timezone = pytz.timezone("Asia/Kolkata")  # Update this to your timezone
-        scheduled_datetime = datetime.strptime(date, "%Y-%m-%d").replace(
-            hour=time_parts[0], minute=time_parts[1], second=0
-        )
-        scheduled_datetime = local_timezone.localize(scheduled_datetime)
+# Check and send emails at the scheduled time
+def email_scheduler(sender_email, sender_password):
+    while True:
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        conn = sqlite3.connect('emails.db')
+        c = conn.cursor()
+        c.execute('''
+            SELECT id, to_email, subject, message FROM scheduled_emails 
+            WHERE send_time <= ?
+        ''', (now,))
+        emails = c.fetchall()
+        for email in emails:
+            send_email(sender_email, sender_password, email[1], email[2], email[3])
+            c.execute('DELETE FROM scheduled_emails WHERE id = ?', (email[0],))
+            conn.commit()
+        conn.close()
+        time.sleep(60)
 
-        # Ensure the scheduled time is in the future
-        if scheduled_datetime <= datetime.now(local_timezone):
-            return "The scheduled time is in the past. Please set a future date and time."
+# Start the email scheduler in a background thread
+def start_scheduler(sender_email, sender_password):
+    scheduler_thread = threading.Thread(target=email_scheduler, args=(sender_email, sender_password), daemon=True)
+    scheduler_thread.start()
 
-        # Schedule the email
-        scheduler.add_job(
-            send_email,
-            DateTrigger(run_date=scheduled_datetime),
-            args=[sender_email, sender_password, recipient_email, subject, body],
-            id=f"{sender_email}_{scheduled_datetime.timestamp()}"
-        )
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        sender_email = request.form['sender_email']
+        sender_password = request.form['sender_password']
+        to_email = request.form['to_email']
+        subject = request.form['subject']
+        message = request.form['message']
+        send_time = request.form['send_time']
 
-        logging.info(f"Email scheduled for {scheduled_datetime.strftime('%Y-%m-%d %I:%M %p')} (local time).")
-        return f"Email scheduled for {scheduled_datetime.strftime('%Y-%m-%d %I:%M %p')} (local time)."
-    except Exception as e:
-        logging.error(f"Error scheduling email: {e}")
-        return f"Failed to schedule email: {e}"
+        start_scheduler(sender_email, sender_password)
+        schedule_email(to_email, subject, message, send_time)
+        return "Email scheduled successfully!"
+    return render_template('index.html')
 
-# Gradio interface
-def email_interface(sender_email, sender_password, recipient_email, subject, body, date, time_str, am_pm):
-    return schedule_email(sender_email, sender_password, recipient_email, subject, body, date, time_str, am_pm)
-
-# Create Gradio app
-with gr.Blocks() as email_app:
-    gr.Markdown("# Scheduled Email Sender")
-    gr.Markdown("Enter the details below to schedule an email for a specific date and time.")
-
-    with gr.Row():
-        sender_email = gr.Textbox(label="Sender Email", placeholder="Your email")
-        sender_password = gr.Textbox(label="Sender Password", type="password", placeholder="Your email password")
-    recipient_email = gr.Textbox(label="Recipient Email", placeholder="Recipient's email")
-    subject = gr.Textbox(label="Subject", placeholder="Email subject")
-    body = gr.Textbox(label="Body", placeholder="Email content", lines=4)
-    date = gr.Textbox(label="Date (YYYY-MM-DD)", placeholder="Schedule date")
-    time_str = gr.Textbox(label="Time (HH:MM)", placeholder="Schedule time")
-    am_pm = gr.Radio(["AM", "PM"], label="AM/PM", value="AM")
-    send_button = gr.Button("Schedule Email")
-    output = gr.Textbox(label="Status")
-
-    send_button.click(
-        email_interface,
-        inputs=[sender_email, sender_password, recipient_email, subject, body, date, time_str, am_pm],
-        outputs=output,
-    )
-
-# Run Gradio app with a public link
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 7860))
-    email_app.launch(share=True)
+    init_db()
+    app.run(host='0.0.0.0', port=5000)
