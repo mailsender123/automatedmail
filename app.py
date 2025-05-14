@@ -1,10 +1,11 @@
-import smtplib
 import sqlite3
 from datetime import datetime
 import time
 import threading
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 import urllib.parse
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 # Database setup
 def init_db():
@@ -22,15 +23,18 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Function to send an email
-def send_email(sender_email, sender_password, to_email, subject, message):
+# Function to send an email via SendGrid
+def send_email(sendgrid_api_key, sender_email, to_email, subject, message):
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(sender_email, sender_password)
-            email_message = f"Subject: {subject}\n\n{message}"
-            server.sendmail(sender_email, to_email, email_message)
-            print(f"Email sent to {to_email}")
+        sg = SendGridAPIClient(sendgrid_api_key)
+        email_message = Mail(
+            from_email=sender_email,
+            to_emails=to_email,
+            subject=subject,
+            plain_text_content=message
+        )
+        response = sg.send(email_message)
+        print(f"Email sent to {to_email} with status {response.status_code}")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
@@ -46,7 +50,7 @@ def schedule_email(to_email, subject, message, send_time):
     conn.close()
 
 # Check and send emails at the scheduled time
-def email_scheduler(sender_email, sender_password):
+def email_scheduler(sendgrid_api_key, sender_email):
     while True:
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         conn = sqlite3.connect('emails.db')
@@ -57,15 +61,15 @@ def email_scheduler(sender_email, sender_password):
         ''', (now,))
         emails = c.fetchall()
         for email in emails:
-            send_email(sender_email, sender_password, email[1], email[2], email[3])
+            send_email(sendgrid_api_key, sender_email, email[1], email[2], email[3])
             c.execute('DELETE FROM scheduled_emails WHERE id = ?', (email[0],))
             conn.commit()
         conn.close()
         time.sleep(60)
 
 # Start the email scheduler in a background thread
-def start_scheduler(sender_email, sender_password):
-    scheduler_thread = threading.Thread(target=email_scheduler, args=(sender_email, sender_password), daemon=True)
+def start_scheduler(sendgrid_api_key, sender_email):
+    scheduler_thread = threading.Thread(target=email_scheduler, args=(sendgrid_api_key, sender_email), daemon=True)
     scheduler_thread.start()
 
 # Custom HTTP Request Handler
@@ -85,14 +89,14 @@ class EmailSchedulerHandler(SimpleHTTPRequestHandler):
         post_data = self.rfile.read(content_length).decode()
         data = urllib.parse.parse_qs(post_data)
 
+        sendgrid_api_key = data['sendgrid_api_key'][0]
         sender_email = data['sender_email'][0]
-        sender_password = data['sender_password'][0]
         to_email = data['to_email'][0]
         subject = data['subject'][0]
         message = data['message'][0]
         send_time = data['send_time'][0]
 
-        start_scheduler(sender_email, sender_password)
+        start_scheduler(sendgrid_api_key, sender_email)
         schedule_email(to_email, subject, message, send_time)
 
         self.send_response(200)
