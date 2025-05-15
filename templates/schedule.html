@@ -1,1 +1,26 @@
-
+<!-- schedule.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mail Scheduler - Schedule</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin: 50px; }
+        input, textarea, button { padding: 8px; margin: 5px; width: 300px; }
+        h2 { color: #333; }
+    </style>
+</head>
+<body>
+    <h2>Schedule Your Email</h2>
+    <form action="/schedule" method="post">
+        <label for="recipient">Recipient Email:</label><br>
+        <input type="email" name="recipient" required><br>
+        <label for="subject">Subject:</label><br>
+        <input type="text" name="subject" required><br>
+        <label for="message">Message:</label><br>
+        <textarea name="message" rows="4" required></textarea><br>
+        <label for="time">Scheduled Time:</label><br>
+        <input type="datetime-local" name="time" required><br>
+        <button type="submit">Schedule</button>
+    </form>
+</body>
+</html>
